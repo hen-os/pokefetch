@@ -1,0 +1,161 @@
+#!/usr/bin/env zsh
+
+# Pokefetch
+#
+# Usage:
+#   pokefetch              -> default Pokemon
+#   pokefetch jolteon      -> specific Pokemon
+#   pokefetch --random     -> random Pokemon
+
+# ─────────────────────────────────────
+# Configuration
+# ─────────────────────────────────────
+
+DEFAULT_POKEMON="jolteon"
+
+WIDTH=38
+GAP=2
+
+EXTRA_PADDING_H=0
+EXTRA_PADDING_W=0
+
+# ─────────────────────────────────────
+# Pokemon selection
+# ─────────────────────────────────────
+
+case "$1" in
+    --random|-r)
+        POKEMON="random"
+        ;;
+
+    --help|-h)
+        echo "Usage:"
+        echo "  pokefetch              Show ${DEFAULT_POKEMON}"
+        echo "  pokefetch <pokemon>    Show specific Pokemon"
+        echo "  pokefetch --random     Show random Pokemon"
+        exit 0
+        ;;
+
+    "")
+        POKEMON="$DEFAULT_POKEMON"
+        ;;
+
+    *)
+        POKEMON="$1"
+        ;;
+esac
+
+# ─────────────────────────────────────
+# Generate sprite
+# ─────────────────────────────────────
+
+SPRITE=$(pokeget "$POKEMON" --hide-name)
+
+if [[ $? -ne 0 || -z "$SPRITE" ]]; then
+    echo "pokefetch: failed to load Pokemon '$POKEMON'" >&2
+    exit 1
+fi
+
+# ─────────────────────────────────────
+# Dimensions
+# ─────────────────────────────────────
+
+SPRITE_HEIGHT=$(printf '%s\n' "$SPRITE" | wc -l)
+
+FETCH_HEIGHT=$(fastfetch --logo none | wc -l)
+
+SPRITE_WIDTH=$(
+    printf '%s\n' "$SPRITE" \
+    | sed $'s/\e\\[[0-9;]*m//g' \
+    | awk '
+        {
+            if (length > max)
+                max = length
+        }
+
+        END {
+            print max
+        }
+    '
+)
+
+# ─────────────────────────────────────
+# Vertical alignment
+# ─────────────────────────────────────
+
+LOGO_PADDING_TOP=0
+FETCH_PADDING_TOP=0
+
+if (( FETCH_HEIGHT > SPRITE_HEIGHT )); then
+    LOGO_PADDING_TOP=$(( (FETCH_HEIGHT - SPRITE_HEIGHT) / 2 ))
+
+elif (( SPRITE_HEIGHT > FETCH_HEIGHT )); then
+    FETCH_PADDING_TOP=$(( (SPRITE_HEIGHT - FETCH_HEIGHT) / 2 ))
+fi
+
+LOGO_PADDING_TOP=$(( LOGO_PADDING_TOP + EXTRA_PADDING_H ))
+
+# ─────────────────────────────────────
+# Horizontal alignment
+# ─────────────────────────────────────
+
+available=$(( WIDTH - SPRITE_WIDTH ))
+
+if (( available > 0 )); then
+    LOGO_PADDING_LEFT=$(( available / 2 + EXTRA_PADDING_W ))
+    LOGO_PADDING_RIGHT=$(( available - available / 2 + EXTRA_PADDING_W ))
+else
+    LOGO_PADDING_LEFT=$EXTRA_PADDING_W
+    LOGO_PADDING_RIGHT=$EXTRA_PADDING_W
+fi
+
+LOGO_PADDING_RIGHT=$(( LOGO_PADDING_RIGHT + GAP ))
+
+(( LOGO_PADDING_LEFT < 0 )) && LOGO_PADDING_LEFT=0
+(( LOGO_PADDING_RIGHT < 0 )) && LOGO_PADDING_RIGHT=0
+(( LOGO_PADDING_TOP < 0 )) && LOGO_PADDING_TOP=0
+
+# ─────────────────────────────────────
+# Build temporary Fastfetch config
+# ─────────────────────────────────────
+
+TMP_CONFIG=$(mktemp --suffix=.jsonc)
+
+{
+    echo '{'
+    echo '  "modules": ['
+
+    for (( i = 0; i < FETCH_PADDING_TOP; i++ )); do
+        echo '    "break",'
+    done
+
+    echo '    { "type": "title", "format": "{user-name}@{host-name}" },'
+    echo '    { "type": "custom", "format": "────────────────────" },'
+    echo '    { "type": "os", "key": "󰣇  OS", "format": "{name}" },'
+    echo '    { "type": "kernel", "key": "󰒋  Kernel", "format": "{release}" },'
+    echo '    { "type": "wm", "key": "  WM" },'
+    echo '    { "type": "display", "key": "󰍹  Display" },'
+    echo '    { "type": "shell", "key": "  Shell" },'
+    echo '    { "type": "packages", "key": "󰏖  Packages" },'
+    echo '    { "type": "disk", "key": "󰋊  Disk /", "folders": "/" },'
+    echo '    { "type": "disk", "key": "󰉋  Home", "folders": "/home" },'
+    echo '    { "type": "memory", "key": "󰍛  Memory" },'
+    echo '    { "type": "uptime", "key": "󰅐  Uptime" }'
+
+    echo '  ]'
+    echo '}'
+} > "$TMP_CONFIG"
+
+trap 'rm -f "$TMP_CONFIG"' EXIT INT TERM
+
+# ─────────────────────────────────────
+# Render
+# ─────────────────────────────────────
+
+printf '%s\n' "$SPRITE" |
+    fastfetch \
+        --config "$TMP_CONFIG" \
+        --file-raw - \
+        --logo-padding-top "$LOGO_PADDING_TOP" \
+        --logo-padding-left "$LOGO_PADDING_LEFT" \
+        --logo-padding-right "$LOGO_PADDING_RIGHT"
